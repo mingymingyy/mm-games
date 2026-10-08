@@ -1,0 +1,14 @@
+[theme]
+base = "light"
+primaryColor = "#d0342c"
+backgroundColor = "#f6f7fb"
+secondaryBackgroundColor = "#eef1f6"
+textColor = "#1e293b"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

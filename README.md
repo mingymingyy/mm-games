@@ -22,7 +22,10 @@ python -m pytest tests
 ## Structure
 
 ```
-app.py            Streamlit UI (pages, timer, buttons)
+app.py            Streamlit pages: game list, game pages, live play screens
+ui.py             Look and feel: theme CSS, hero banner, badges, art cards
+assets/logo.svg   Header logo
+.streamlit/       Theme (colours, Inter font)
 games/fruit.py    Fruit Market rules, quoting, scoring
 games/cards.py    Card odds, Kelly fraction, skill scoring
 tests/            Unit tests for both rule engines
