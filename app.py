@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from games.cards import CardGame, rank_name
-from games.fruit import BAG_MAX, FruitGame
+from games.fruit import BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, FruitGame
 
 st.set_page_config(page_title="Market Making Games", page_icon="📊", layout="centered")
 
@@ -15,8 +15,10 @@ st.markdown("""
         text-align: center; padding: .4rem 0; letter-spacing: .05em;}
 .quote .bid {color:#d64545;} .quote .ask {color:#1f9d55;} .quote .at {opacity:.5;}
 .bag {border:1px solid rgba(128,128,128,.35); border-radius:12px; padding:.6rem .8rem;
-      font-size:1.35rem; line-height:1.9; min-height:7.5rem;}
+      font-size:1.1rem; line-height:1.7; min-height:7.5rem;}
 .bag h4 {margin:0 0 .2rem 0; font-size:.9rem; opacity:.7;}
+.bag .n {display:inline-block; min-width:2.2em; font-family:ui-monospace, monospace;
+         font-size:1.5rem; font-weight:700;}
 .card {display:inline-block; width:110px; height:150px; border-radius:12px;
        border:2px solid rgba(128,128,128,.5); background:#fff; color:#111;
        font-size:2.6rem; font-weight:700; text-align:center; line-height:150px;}
@@ -35,13 +37,15 @@ def fruit_trade(side: str):
         return
     verb = "Bought at" if side == "buy" else "Sold at"
     tag = "✅" if tr.pnl > 0 else ("➖" if tr.pnl == 0 else "❌")
-    st.session_state.fruit_msg = f"{tag} {verb} {tr.price} · value was {tr.value:g} · P&L {tr.pnl:+g}"
+    st.session_state.fruit_msg = (f"{tag} {verb} {tr.price} · value was {tr.value:g} · "
+                                  f"P&L {tr.pnl:+g} × {tr.weight:.0%} = {tr.scored_pnl:+.2f}")
 
 
 def bag_html(i: int, bag, reset: bool) -> str:
     note = " · <i>reset</i>" if reset else ""
     return (f"<div class='bag'><h4>Bag {i + 1}{note}</h4>"
-            f"{'🍎' * bag.apples}<br>{'🍊' * bag.oranges}</div>")
+            f"<span class='n'>{bag.apples}</span>{'🍎' * bag.apples}<br>"
+            f"<span class='n'>{bag.oranges}</span>{'🍊' * bag.oranges}</div>")
 
 
 @st.fragment(run_every=1)
@@ -79,10 +83,11 @@ def fruit_live():
     if st.session_state.get("fruit_msg"):
         st.caption(st.session_state.fruit_msg)
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Raw P&L", f"{g.raw_profit:+g}")
-    m2.metric("First-click accuracy", f"{g.first_click_accuracy:.0%}")
-    m3.metric("Trades", len(g.trades))
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Score", f"{g.final_score:+.2f}")
+    m2.metric("Next click worth", f"{g.next_click_weight:.0%}")
+    m3.metric("First-click accuracy", f"{g.first_click_accuracy:.0%}")
+    m4.metric("Trades", len(g.trades))
 
 
 def fruit_results(g: FruitGame):
@@ -90,10 +95,11 @@ def fruit_results(g: FruitGame):
     c1, c2, c3 = st.columns(3)
     c1.metric("Raw profit", f"{g.raw_profit:+g}")
     c2.metric("First-click accuracy", f"{g.first_click_accuracy:.0%}")
-    c3.metric("Final score", f"{g.final_score:+.1f}")
+    c3.metric("Final score", f"{g.final_score:+.2f}")
     if g.trades:
         df = pd.DataFrame([{"Market": t.market_id, "Side": t.side.upper(), "Price": t.price,
-                            "Value": t.value, "P&L": t.pnl} for t in g.trades])
+                            "Value": t.value, "P&L": t.pnl, "Weight": f"{t.weight:.0%}",
+                            "Scored": round(t.scored_pnl, 2)} for t in g.trades])
         st.dataframe(df, hide_index=True, width="stretch")
     else:
         st.info("No trades this game, so the score is 0.")
@@ -112,17 +118,21 @@ def fruit_page():
         with st.expander("Rules", expanded=True):
             st.markdown(f"""
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
-- **Value = (apples in both bags) × (oranges in both bags).** Count it yourself.
+- **Value = (apples in both bags) × (oranges in both bags).** Each bag shows its counts.
 - The market quotes **bid @ ask** around the value, with noise. It reprices every few seconds.
-- Every **15 to 20 seconds** each bag gains 0 to 3 of each fruit. If any count goes above **{BAG_MAX}**, that bag resets. Each update starts a new market.
+- Every **15 to 20 seconds** each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each update starts a new market.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.
-- **Final score = raw profit × first-click accuracy** (share of markets where your *first* trade made money).
+- **Click decay:** in each market, every click counts **{CLICK_DECAY:.0%}** of the one before (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY**2:.0%}, ...). A wrong first click hits at full weight; trades to win it back count for less.
+- **Final score = sum of (P&L × click weight).** First-click accuracy is shown as a stat.
 """)
         with st.form("fruit_setup"):
             minutes = st.slider("Game length (minutes)", 1, 10, 5)
+            bag_max = st.slider("Max apples / oranges per bag (difficulty)",
+                                BAG_MAX_MIN, BAG_MAX_MAX, BAG_MAX)
             events = st.toggle("Market events", value=True)
             if st.form_submit_button("Start game", type="primary"):
-                st.session_state.fruit = FruitGame(duration_s=minutes * 60, events_on=events)
+                st.session_state.fruit = FruitGame(duration_s=minutes * 60, events_on=events,
+                                                    bag_max=bag_max)
                 st.session_state.fruit_msg = ""
                 st.rerun()
         return

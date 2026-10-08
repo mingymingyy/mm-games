@@ -3,6 +3,10 @@
 Value = (total apples across both bags) x (total oranges across both bags).
 The market quotes a noisy bid/ask around that value. Buy when value > ask,
 sell when value < bid. Each trade is one unit, marked instantly at true value.
+
+Click decay: within one market, each click counts CLICK_DECAY times the one
+before it (1, 0.85, 0.7225, ...). A wrong first click is scored at full weight,
+and any later clicks that try to win it back count for less.
 """
 from __future__ import annotations
 
@@ -12,11 +16,13 @@ from dataclasses import dataclass, field
 
 START_MIN, START_MAX = 3, 8      # fresh bag contents per fruit
 GROW_MIN, GROW_MAX = 0, 3        # fruit added per update
-BAG_MAX = 12                     # above this, the bag resets
+BAG_MAX = 12                     # default cap: above this, the bag resets
+BAG_MAX_MIN, BAG_MAX_MAX = 10, 25  # range the player can choose from
 UPDATE_MIN_S, UPDATE_MAX_S = 15, 20
 REQUOTE_S = 3                    # market reprices this often within a market
 QUOTE_NOISE = 0.12               # sd of mid mispricing, as a fraction of value
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
+CLICK_DECAY = 0.85               # each click in a market is worth this x the previous
 
 
 @dataclass
@@ -43,10 +49,10 @@ def new_bag(rng: random.Random) -> Bag:
     return Bag(rng.randint(START_MIN, START_MAX), rng.randint(START_MIN, START_MAX))
 
 
-def grow_bag(bag: Bag, rng: random.Random) -> tuple[Bag, bool]:
+def grow_bag(bag: Bag, rng: random.Random, bag_max: int = BAG_MAX) -> tuple[Bag, bool]:
     a = bag.apples + rng.randint(GROW_MIN, GROW_MAX)
     o = bag.oranges + rng.randint(GROW_MIN, GROW_MAX)
-    if a > BAG_MAX or o > BAG_MAX:
+    if a > bag_max or o > bag_max:
         return new_bag(rng), True
     return Bag(a, o), False
 
@@ -89,12 +95,21 @@ class Trade:
     value: float
     pnl: float
     t: float
+    weight: float = 1.0  # CLICK_DECAY ** (clicks already made in this market)
+
+    @property
+    def scored_pnl(self) -> float:
+        return self.pnl * self.weight
 
 
 class FruitGame:
     def __init__(self, duration_s: int = 300, events_on: bool = True,
-                 seed: int | None = None, now: float | None = None):
+                 seed: int | None = None, now: float | None = None,
+                 bag_max: int = BAG_MAX):
+        if not BAG_MAX_MIN <= bag_max <= BAG_MAX_MAX:
+            raise ValueError(f"bag_max must be {BAG_MAX_MIN} to {BAG_MAX_MAX}")
         self.rng = random.Random(seed)
+        self.bag_max = bag_max
         now = time.time() if now is None else now
         self.start, self.end = now, now + duration_s
         self.events_on = events_on
@@ -107,6 +122,7 @@ class FruitGame:
         self.bid, self.ask = make_quote(self.value, self.rng)
         self.trades: list[Trade] = []
         self.first_trade_ok: dict[int, bool] = {}
+        self.clicks: dict[int, int] = {}                   # market id -> clicks so far
         self.markets: dict[int, float] = {1: self.value}   # market id -> value
 
     # ---- state -------------------------------------------------------
@@ -126,7 +142,7 @@ class FruitGame:
             self.next_requote = now + REQUOTE_S
 
     def _update_bags(self, t: float) -> None:
-        grown = [grow_bag(b, self.rng) for b in self.bags]
+        grown = [grow_bag(b, self.rng, self.bag_max) for b in self.bags]
         self.bags = [g[0] for g in grown]
         self.reset_flags = [g[1] for g in grown]
         self.event = random_event(self.rng) if (self.events_on and self.rng.random() < EVENT_PROB) else None
@@ -135,6 +151,10 @@ class FruitGame:
         self.bid, self.ask = make_quote(self.value, self.rng)
         self.next_requote = t + REQUOTE_S
         self.next_bag_update = t + self.rng.uniform(UPDATE_MIN_S, UPDATE_MAX_S)
+
+    @property
+    def next_click_weight(self) -> float:
+        return CLICK_DECAY ** self.clicks.get(self.market_id, 0)
 
     # ---- actions -----------------------------------------------------
     def trade(self, side: str, now: float | None = None) -> Trade | None:
@@ -149,7 +169,8 @@ class FruitGame:
             price, pnl = self.bid, self.bid - v
         else:
             raise ValueError(side)
-        tr = Trade(self.market_id, side, price, v, pnl, now)
+        tr = Trade(self.market_id, side, price, v, pnl, now, self.next_click_weight)
+        self.clicks[self.market_id] = self.clicks.get(self.market_id, 0) + 1
         self.trades.append(tr)
         self.first_trade_ok.setdefault(self.market_id, pnl > 0)
         return tr
@@ -167,4 +188,5 @@ class FruitGame:
 
     @property
     def final_score(self) -> float:
-        return self.raw_profit * self.first_click_accuracy
+        """Sum of each trade's P&L times its click weight."""
+        return sum(t.scored_pnl for t in self.trades)

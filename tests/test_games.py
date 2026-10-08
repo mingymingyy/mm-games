@@ -3,7 +3,9 @@ import math
 import random
 
 from games.cards import CardGame, build_deck, kelly, odds
-from games.fruit import Bag, Event, FruitGame, true_value
+import pytest
+
+from games.fruit import CLICK_DECAY, Bag, Event, FruitGame, true_value
 
 
 def test_value_and_events():
@@ -24,16 +26,43 @@ def test_fruit_pnl_and_scoring():
     assert len(g.first_trade_ok) == 1
     g.trade("buy", now=25.0)  # bags must have updated by 20s
     assert g.market_id >= 2 and len(g.first_trade_ok) == 2
-    assert math.isclose(g.final_score, g.raw_profit * g.first_click_accuracy)
+    assert math.isclose(g.final_score, sum(t.pnl * t.weight for t in g.trades))
     assert g.trade("buy", now=500.0) is None
 
 
-def test_bags_stay_in_bounds():
-    g = FruitGame(duration_s=10_000, seed=3, now=0.0)
+@pytest.mark.parametrize("bag_max", [10, 12, 25])
+def test_bags_stay_in_bounds(bag_max):
+    g = FruitGame(duration_s=10_000, seed=3, now=0.0, bag_max=bag_max)
     for t in range(0, 10_000, 7):
         g.tick(float(t))
         for b in g.bags:
-            assert 3 <= b.apples <= 12 and 3 <= b.oranges <= 12
+            assert 3 <= b.apples <= bag_max and 3 <= b.oranges <= bag_max
+
+
+def test_bag_max_out_of_range():
+    for bad in (9, 26):
+        with pytest.raises(ValueError):
+            FruitGame(bag_max=bad, now=0.0)
+
+
+def test_click_decay_per_market():
+    g = FruitGame(duration_s=120, seed=1, now=0.0)
+    trades = [g.trade("buy", now=1.0 + i * 0.1) for i in range(3)]
+    assert [t.weight for t in trades] == [1.0, CLICK_DECAY, CLICK_DECAY ** 2]
+    assert math.isclose(trades[2].scored_pnl, trades[2].pnl * CLICK_DECAY ** 2)
+    nxt = g.trade("buy", now=25.0)  # new market: weight starts again at 100%
+    assert nxt.market_id != trades[0].market_id and nxt.weight == 1.0
+
+
+def test_wrong_first_click_is_not_cancelled_by_recovery():
+    # Lose 10 on the first click, then win 10 on the second: net score is negative.
+    g = FruitGame(duration_s=120, seed=1, now=0.0)
+    g.bid, g.ask = round(g.value) + 10, round(g.value) + 12
+    lose = g.trade("buy", now=1.0)
+    g.bid, g.ask = round(g.value) + 10, round(g.value) + 12
+    win = g.trade("sell", now=1.1)
+    assert lose.pnl < 0 < win.pnl
+    assert g.final_score < 0 and g.raw_profit >= g.final_score
 
 
 def test_kelly_brute_force():
