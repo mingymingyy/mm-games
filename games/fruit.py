@@ -1,12 +1,15 @@
 """Fruit Market game logic (no Streamlit here, so it can be unit-tested).
 
 Value = (total apples across both bags) x (total oranges across both bags).
-Each bag round gets one bid/ask, held for the whole round. The quote is always
+Each bag round lasts ROUND_S and is requoted every REQUOTE_S. Every quote is always
 slightly mispriced so that exactly one side makes money: either value > ask
 (buy) or value < bid (sell), never value inside the spread. Each trade is one
 unit, marked instantly at true value.
 
-Click decay: within one market, each click counts CLICK_DECAY times the one
+Trading lock: for LOCK_S after any quote change (new round or requote), trades
+are refused, so a click aimed at the old price can't fill at the new one.
+
+Click decay: within one market (round), each click counts CLICK_DECAY times the one
 before it (1, 0.85, 0.7225, ...). A wrong first click is scored at full weight,
 and any later clicks that try to win it back count for less.
 """
@@ -21,7 +24,9 @@ START_MIN, START_MAX = 3, 8      # fresh bag contents per fruit
 GROW_MIN, GROW_MAX = 0, 3        # fruit added per update
 BAG_MAX = 12                     # default cap: above this, the bag resets
 BAG_MAX_MIN, BAG_MAX_MAX = 10, 25  # range the player can choose from
-ROUND_S = 15                     # each bag round (one quote) lasts this long
+ROUND_S = 30                     # each bag round lasts this long
+REQUOTE_S = 10                   # new quote this often within a round
+LOCK_S = 2                       # no trading for this long after any quote change
 SPREAD_PCT = 0.02                # ask - bid, as a fraction of value (min 1)
 EDGE_MIN, EDGE_MAX = 0.01, 0.05  # gap from value to the near side of the quote (min 1)
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
@@ -125,7 +130,7 @@ class FruitGame:
         self.reset_flags = [False, False]
         self.market_id = 1
         self.next_bag_update = now + ROUND_S
-        self.bid, self.ask = make_quote(self.value, self.rng)
+        self._new_quote(now)
         self.trades: list[Trade] = []
         self.first_trade_ok: dict[int, bool] = {}
         self.clicks: dict[int, int] = {}                   # market id -> clicks so far
@@ -139,10 +144,33 @@ class FruitGame:
     def finished(self, now: float | None = None) -> bool:
         return (time.time() if now is None else now) >= self.end
 
+    def locked(self, now: float | None = None) -> bool:
+        return self.lock_remaining(now) > 0
+
+    def lock_remaining(self, now: float | None = None) -> float:
+        now = time.time() if now is None else now
+        self.tick(now)
+        return max(0.0, self.quote_time + LOCK_S - now)
+
     def tick(self, now: float | None = None) -> None:
         now = time.time() if now is None else min(now, self.end)
-        while now >= self.next_bag_update and self.next_bag_update < self.end:
-            self._update_bags(self.next_bag_update)
+        while True:
+            t = min(self.next_bag_update, self.next_requote)
+            if now < t or t >= self.end:
+                return
+            if self.next_bag_update <= self.next_requote:   # round change wins a tie
+                self._update_bags(self.next_bag_update)
+            else:
+                self._new_quote(self.next_requote)
+
+    def _new_quote(self, t: float) -> None:
+        old = (getattr(self, "bid", None), getattr(self, "ask", None))
+        quote = make_quote(self.value, self.rng)
+        while quote == old:                 # a requote must visibly change the price
+            quote = make_quote(self.value, self.rng)
+        self.bid, self.ask = quote
+        self.quote_time = t
+        self.next_requote = t + REQUOTE_S
 
     def _update_bags(self, t: float) -> None:
         grown = [grow_bag(b, self.rng, self.bag_max) for b in self.bags]
@@ -151,8 +179,8 @@ class FruitGame:
         self.event = random_event(self.rng) if (self.events_on and self.rng.random() < EVENT_PROB) else None
         self.market_id += 1
         self.markets[self.market_id] = self.value
-        self.bid, self.ask = make_quote(self.value, self.rng)
         self.next_bag_update = t + ROUND_S
+        self._new_quote(t)
 
     @property
     def next_click_weight(self) -> float:
@@ -161,9 +189,8 @@ class FruitGame:
     # ---- actions -----------------------------------------------------
     def trade(self, side: str, now: float | None = None) -> Trade | None:
         now = time.time() if now is None else now
-        if self.finished(now):
+        if self.finished(now) or self.locked(now):
             return None
-        self.tick(now)
         v = self.value
         if side == "buy":
             price, pnl = self.ask, v - self.ask

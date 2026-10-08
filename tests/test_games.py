@@ -5,8 +5,8 @@ import random
 from games.cards import CardGame, build_deck, kelly, odds
 import pytest
 
-from games.fruit import (CLICK_DECAY, EDGE_MAX, ROUND_S, SPREAD_PCT, Bag, Event,
-                         FruitGame, make_quote, true_value)
+from games.fruit import (CLICK_DECAY, EDGE_MAX, LOCK_S, REQUOTE_S, ROUND_S, SPREAD_PCT, Bag,
+                         Event, FruitGame, make_quote, true_value)
 
 
 def test_value_and_events():
@@ -21,11 +21,11 @@ def test_value_and_events():
 def test_fruit_pnl_and_scoring():
     g = FruitGame(duration_s=120, seed=1, now=0.0)
     v = g.value
-    tr = g.trade("buy", now=1.0)
+    tr = g.trade("buy", now=LOCK_S)
     assert tr.pnl == v - g.ask
-    g.trade("sell", now=1.5)  # same market: not counted for first click
+    g.trade("sell", now=LOCK_S + 0.5)  # same market: not counted for first click
     assert len(g.first_trade_ok) == 1
-    g.trade("buy", now=25.0)  # bags update at 15s
+    g.trade("buy", now=ROUND_S + LOCK_S + 1)  # next round
     assert g.market_id >= 2 and len(g.first_trade_ok) == 2
     assert math.isclose(g.final_score, sum(t.pnl * t.weight for t in g.trades))
     assert g.trade("buy", now=500.0) is None
@@ -60,23 +60,56 @@ def test_bag_max_out_of_range():
             FruitGame(bag_max=bad, now=0.0)
 
 
-def test_one_quote_per_round():
+def test_round_and_requote_schedule():
     g = FruitGame(duration_s=120, seed=5, now=0.0)
     quote = (g.bid, g.ask)
-    g.tick(ROUND_S - 0.01)
-    assert (g.bid, g.ask) == quote and g.market_id == 1
+    g.tick(REQUOTE_S - 0.01)
+    assert (g.bid, g.ask) == quote and g.quote_time == 0.0   # quote held for 10 s
+    g.tick(REQUOTE_S)
+    assert g.quote_time == REQUOTE_S and g.market_id == 1     # requote, same round
+    g.tick(2 * REQUOTE_S)
+    assert g.quote_time == 2 * REQUOTE_S and g.market_id == 1
     g.tick(ROUND_S)
-    assert g.market_id == 2 and g.next_bag_update == 2 * ROUND_S
+    assert g.market_id == 2 and g.quote_time == ROUND_S        # new round, new quote
+    assert g.next_requote == ROUND_S + REQUOTE_S and g.next_bag_update == 2 * ROUND_S
     g.tick(119.0)
     assert g.market_id == 1 + int(119 // ROUND_S)
+    assert g.quote_time == 110.0
+
+
+def test_every_requote_has_exactly_one_winning_side():
+    g = FruitGame(duration_s=3000, seed=11, now=0.0, bag_max=25)
+    seen, last = set(), None
+    for t in range(0, 3000):
+        g.tick(float(t))
+        if g.quote_time not in seen:
+            seen.add(g.quote_time)
+            v = g.value
+            assert (v > g.ask) != (v < g.bid)
+            assert (g.bid, g.ask) != last      # every requote shows a new price
+            last = (g.bid, g.ask)
+    assert len(seen) == 300   # one quote every 10 s
+
+
+def test_trading_locked_after_quote_change():
+    g = FruitGame(duration_s=120, seed=2, now=0.0)
+    assert g.trade("buy", now=LOCK_S - 0.01) is None           # game start counts as a change
+    assert g.trade("buy", now=LOCK_S) is not None
+    assert g.trade("buy", now=REQUOTE_S + 1.0) is None          # requote at 10 s
+    assert g.trade("buy", now=REQUOTE_S + LOCK_S) is not None
+    assert g.trade("sell", now=ROUND_S + 1.99) is None          # new round at 30 s
+    assert g.trade("sell", now=ROUND_S + LOCK_S) is not None
+    assert len(g.trades) == 3
 
 
 def test_click_decay_per_market():
     g = FruitGame(duration_s=120, seed=1, now=0.0)
-    trades = [g.trade("buy", now=1.0 + i * 0.1) for i in range(3)]
+    trades = [g.trade("buy", now=LOCK_S + i * 0.1) for i in range(3)]
     assert [t.weight for t in trades] == [1.0, CLICK_DECAY, CLICK_DECAY ** 2]
     assert math.isclose(trades[2].scored_pnl, trades[2].pnl * CLICK_DECAY ** 2)
-    nxt = g.trade("buy", now=25.0)  # new market: weight starts again at 100%
+    later = g.trade("buy", now=REQUOTE_S + LOCK_S)  # requote: same round, decay continues
+    assert later.weight == CLICK_DECAY ** 3
+    nxt = g.trade("buy", now=ROUND_S + LOCK_S)  # new round: weight starts again at 100%
     assert nxt.market_id != trades[0].market_id and nxt.weight == 1.0
 
 
@@ -84,9 +117,9 @@ def test_wrong_first_click_is_not_cancelled_by_recovery():
     # Lose 10 on the first click, then win 10 on the second: net score is negative.
     g = FruitGame(duration_s=120, seed=1, now=0.0)
     g.bid, g.ask = round(g.value) + 10, round(g.value) + 12
-    lose = g.trade("buy", now=1.0)
+    lose = g.trade("buy", now=LOCK_S)
     g.bid, g.ask = round(g.value) + 10, round(g.value) + 12
-    win = g.trade("sell", now=1.1)
+    win = g.trade("sell", now=LOCK_S + 0.1)
     assert lose.pnl < 0 < win.pnl
     assert g.final_score < 0 and g.raw_profit >= g.final_score
 

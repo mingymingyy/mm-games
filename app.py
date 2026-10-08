@@ -5,7 +5,8 @@ import pandas as pd
 import streamlit as st
 
 from games.cards import CardGame, rank_name
-from games.fruit import BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, ROUND_S, FruitGame
+from games.fruit import (BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, LOCK_S, REQUOTE_S,
+                         ROUND_S, FruitGame)
 
 st.set_page_config(page_title="Market Making Games", page_icon="📊", layout="centered")
 
@@ -34,6 +35,8 @@ def fruit_trade(side: str):
     g: FruitGame = st.session_state.fruit
     tr = g.trade(side)
     if tr is None:
+        if g.locked():
+            st.session_state.fruit_msg = "⏳ Quote just changed: trading is paused, no trade made."
         return
     verb = "Bought at" if side == "buy" else "Sold at"
     tag = "✅" if tr.pnl > 0 else ("➖" if tr.pnl == 0 else "❌")
@@ -48,7 +51,7 @@ def bag_html(i: int, bag, reset: bool) -> str:
             f"<span class='n'>{bag.oranges}</span>{'🍊' * bag.oranges}</div>")
 
 
-@st.fragment(run_every=1)
+@st.fragment(run_every=0.5)
 def fruit_live():
     g: FruitGame = st.session_state.fruit
     now = time.time()
@@ -58,10 +61,11 @@ def fruit_live():
         fruit_results(g)
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Time left", f"{int(g.end - now)}s")
     c2.metric("Next bag in", f"{max(0, int(g.next_bag_update - now))}s")
-    c3.metric("Market #", g.market_id)
+    c3.metric("Next quote in", f"{max(0, int(min(g.next_requote, g.next_bag_update) - now))}s")
+    c4.metric("Market #", g.market_id)
 
     b1, b2 = st.columns(2)
     b1.markdown(bag_html(0, g.bags[0], g.reset_flags[0]), unsafe_allow_html=True)
@@ -74,11 +78,14 @@ def fruit_live():
                 f" <span class='at'>@</span> <span class='ask'>{g.ask}</span></div>",
                 unsafe_allow_html=True)
 
+    wait = g.lock_remaining(now)
     s, b = st.columns(2)
     s.button(f"SELL at {g.bid}", on_click=fruit_trade, args=("sell",),
-             width="stretch", type="secondary")
+             width="stretch", type="secondary", disabled=wait > 0)
     b.button(f"BUY at {g.ask}", on_click=fruit_trade, args=("buy",),
-             width="stretch", type="primary")
+             width="stretch", type="primary", disabled=wait > 0)
+    if wait > 0:
+        st.caption(f"⏳ New quote: trading opens in {wait:.1f}s")
 
     if st.session_state.get("fruit_msg"):
         st.caption(st.session_state.fruit_msg)
@@ -119,10 +126,11 @@ def fruit_page():
             st.markdown(f"""
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
 - **Value = (apples in both bags) × (oranges in both bags).** Each bag shows its counts.
-- Each round shows **one quote, bid @ ask**, fixed for the round. It is always slightly off the value (1 to 5%), so **exactly one side makes money**: buy if value > ask, sell if value < bid. Spread is about 2%.
-- Every **{ROUND_S} seconds** a new round starts: each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each round is a new market with a new quote.
+- The market quotes **bid @ ask**, with a **new quote every {REQUOTE_S} seconds**. Every quote is always slightly off the value (1 to 5%), so **exactly one side makes money**: buy if value > ask, sell if value < bid. Spread is about 2%.
+- After **any** quote change, trading is **locked for {LOCK_S} seconds** so you can't hit an old price by accident.
+- Every **{ROUND_S} seconds** a new round starts: each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each round is a new market.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.
-- **Click decay:** in each market, every click counts **{CLICK_DECAY:.0%}** of the one before (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY**2:.0%}, ...). A wrong first click hits at full weight; trades to win it back count for less.
+- **Click decay:** in each round, every click counts **{CLICK_DECAY:.0%}** of the one before (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY**2:.0%}, ...). A wrong first click hits at full weight; trades to win it back count for less.
 - **Final score = sum of (P&L × click weight).** First-click accuracy is shown as a stat.
 """)
         with st.form("fruit_setup"):
