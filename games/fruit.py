@@ -28,8 +28,8 @@ ROUND_S = 20                     # each bag round lasts this long
 QUOTES_PER_ROUND = 3
 REQUOTE_S = ROUND_S / QUOTES_PER_ROUND  # 6.67 s per quote
 LOCK_S = 1.5                     # no trading for this long after any quote change
-SPREAD_PCT = 0.02                # ask - bid, as a fraction of value (min 1)
-EDGE_MIN, EDGE_MAX = 0.01, 0.05  # gap from value to the near side of the quote (min 1)
+SPREAD_PCT = 0.01                # ask - bid, as a fraction of value (min 1)
+EDGE_MIN, EDGE_MAX = 0.005, 0.015  # gap from value to the near side of the quote (min 1)
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
 CLICK_DECAY = 0.85               # each click in a market is worth this x the previous
 

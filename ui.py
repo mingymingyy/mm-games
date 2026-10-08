@@ -290,7 +290,7 @@ def fruit_art(small: bool = False) -> str:
     return (f"<div class='art{' small' if small else ''}'>"
             "<div class='item'><div class='face emoji'>🍎</div><span class='chip'>× 11</span></div>"
             "<div class='item'><div class='face emoji'>🍊</div><span class='chip'>× 13</span></div>"
-            "<div class='item'><div class='face emoji'>📈</div><span class='chip'>139 @ 142</span></div>"
+            "<div class='item'><div class='face emoji'>📈</div><span class='chip'>141 @ 142</span></div>"
             "</div>")
 
 

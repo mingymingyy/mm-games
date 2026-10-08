@@ -29,11 +29,12 @@ FRUIT_DESC = ("Work out the value of two fruit bags and trade against a live bid
 
 def start_fruit():
     cfg = {"minutes": st.session_state.fr_minutes, "bag_max": st.session_state.fr_bagmax,
-           "events": st.session_state.fr_events}
+           "events": st.session_state.fr_events, "hide_score": st.session_state.fr_hidescore}
     st.session_state.fr_cfg = cfg
     st.session_state.fruit = FruitGame(duration_s=cfg["minutes"] * 60, events_on=cfg["events"],
                                        bag_max=cfg["bag_max"])
-    st.session_state.fruit_msg = ""
+    st.session_state.fruit_msg = st.session_state.fruit_msg_hidden = ""
+    st.session_state.fr_hide_live = cfg["hide_score"]
 
 
 def fruit_trade(side: str):
@@ -42,11 +43,14 @@ def fruit_trade(side: str):
     if tr is None:
         if g.locked():
             st.session_state.fruit_msg = "⏳ Quote just changed: trading is paused, no trade made."
+            st.session_state.fruit_msg_hidden = st.session_state.fruit_msg
         return
     verb = "Bought at" if side == "buy" else "Sold at"
     tag = "✅" if tr.pnl > 0 else ("➖" if tr.pnl == 0 else "❌")
     st.session_state.fruit_msg = (f"{tag} {verb} {tr.price} · value was {tr.value:g} · "
                                   f"P&L {tr.pnl:+g} × {tr.weight:.0%} = {tr.scored_pnl:+.2f}")
+    # Shown instead when the score is hidden: confirms the fill, not the result.
+    st.session_state.fruit_msg_hidden = f"📝 {verb} {tr.price} · trade #{len(g.trades)}"
 
 
 def bag_html(i: int, bag, reset: bool) -> str:
@@ -98,18 +102,23 @@ def fruit_live():
         b.button(f"BUY at {g.ask}", key="buy_btn", on_click=fruit_trade, args=("buy",),
                  width="stretch", disabled=wait > 0)
 
+        hide = st.session_state.get("fr_hide_live", False)
+        msg = st.session_state.get("fruit_msg_hidden" if hide else "fruit_msg")
         m, q = st.columns([5, 1], vertical_alignment="center")
-        m.markdown(f"<div class='msg'>{st.session_state.get('fruit_msg') or 'No trades yet.'}</div>",
-                   unsafe_allow_html=True)
+        m.markdown(f"<div class='msg'>{msg or 'No trades yet.'}</div>", unsafe_allow_html=True)
         with q.container(key="quit_fruit"):
             if st.button("Quit", width="stretch"):
                 del st.session_state["fruit"]
                 st.rerun(scope="app")
 
+    st.toggle("Hide score while playing", key="fr_hide_live",
+              help="Hides your score, accuracy and each trade's P&L until the game ends.")
+    hide = st.session_state.fr_hide_live
     ui.html("<div class='tiles'>"
-            + ui.tile("Score", f"{g.final_score:+.2f}", ui.tone(g.final_score))
+            + (ui.tile("Score", "Hidden") if hide
+               else ui.tile("Score", f"{g.final_score:+.2f}", ui.tone(g.final_score)))
             + ui.tile("Next click worth", f"{g.next_click_weight:.0%}")
-            + ui.tile("First-click accuracy", f"{g.first_click_accuracy:.0%}")
+            + ui.tile("First-click accuracy", "Hidden" if hide else f"{g.first_click_accuracy:.0%}")
             + ui.tile("Trades", str(len(g.trades))) + "</div>")
 
 
@@ -153,8 +162,8 @@ Two bags of fruit, one market. Work out what the fruit is worth, compare it with
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
 - Each round, every bag gains **0 to 3** of each fruit. If a count goes above the **max you
   choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets.
-- The market quotes {QUOTES_PER_ROUND} times per round. Every quote is **1 to 5% off** the value
-  with a spread of about **2%**, so **exactly one side makes money**.
+- The market quotes {QUOTES_PER_ROUND} times per round. Every quote sits just **0.5 to 1.5% off**
+  the value with a spread of about **1%**, so **exactly one side makes money**, but only a little.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.
 - **Click decay:** within a round, each click counts **{CLICK_DECAY:.0%}** of the one before
   (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY ** 2:.0%}, …). It resets each round.
@@ -182,11 +191,12 @@ Value is **143** in each example.
 
 | Quote | Compare | Right move | P&L |
 |---|---|---|---|
-| **147 @ 150** | 143 is below the bid 147 | **Sell** at 147 | **+4** |
-| **138 @ 141** | 143 is above the ask 141 | **Buy** at 141 | **+2** |
+| **145 @ 146** | 143 is below the bid 145 | **Sell** at 145 | **+2** |
+| **141 @ 142** | 143 is above the ask 142 | **Buy** at 142 | **+1** |
 
-**Why the first click matters.** You panic and buy at 150 (−7 at 100%), then sell at 147
-(+4 at 85% = +3.40). Round score: **−3.60**, even though you ended up on the right side.
+**Why the first click matters.** Quote 145 @ 146: you panic and buy at 146 (−3 at 100%), then
+sell at 145 (+2 at 85% = +1.70). Round score: **−1.30**, even though you ended up on the right side.
+Edges are thin, so one wrong click wipes out several right ones.
 """)
     with t4:
         ui.section("bulb", "Strategies")
@@ -218,7 +228,11 @@ def fruit_page():
         a.slider("Game length (minutes)", 1, 10, cfg.get("minutes", 5), key="fr_minutes")
         b.slider("Max apples / oranges per bag", BAG_MAX_MIN, BAG_MAX_MAX,
                  cfg.get("bag_max", BAG_MAX), key="fr_bagmax", help="Higher = bigger numbers")
-        c.toggle("Market events", value=cfg.get("events", True), key="fr_events")
+        with c:
+            st.toggle("Market events", value=cfg.get("events", True), key="fr_events")
+            st.toggle("Hide score while playing", value=cfg.get("hide_score", False),
+                      key="fr_hidescore", help="See your score only when the game ends. "
+                      "You can also switch this during the game.")
 
     fruit_tabs()
     ui.play_bar("Fruit Market", "1 player", "~5 min", start_fruit, "fr_play_bar")
