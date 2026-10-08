@@ -1,8 +1,10 @@
 """Fruit Market game logic (no Streamlit here, so it can be unit-tested).
 
 Value = (total apples across both bags) x (total oranges across both bags).
-Each bag round gets one noisy bid/ask around that value, held for the whole round. Buy when value > ask,
-sell when value < bid. Each trade is one unit, marked instantly at true value.
+Each bag round gets one bid/ask, held for the whole round. The quote is always
+slightly mispriced so that exactly one side makes money: either value > ask
+(buy) or value < bid (sell), never value inside the spread. Each trade is one
+unit, marked instantly at true value.
 
 Click decay: within one market, each click counts CLICK_DECAY times the one
 before it (1, 0.85, 0.7225, ...). A wrong first click is scored at full weight,
@@ -10,6 +12,7 @@ and any later clicks that try to win it back count for less.
 """
 from __future__ import annotations
 
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -19,7 +22,8 @@ GROW_MIN, GROW_MAX = 0, 3        # fruit added per update
 BAG_MAX = 12                     # default cap: above this, the bag resets
 BAG_MAX_MIN, BAG_MAX_MAX = 10, 25  # range the player can choose from
 ROUND_S = 15                     # each bag round (one quote) lasts this long
-QUOTE_NOISE = 0.12               # sd of mid mispricing, as a fraction of value
+SPREAD_PCT = 0.02                # ask - bid, as a fraction of value (min 1)
+EDGE_MIN, EDGE_MAX = 0.01, 0.05  # gap from value to the near side of the quote (min 1)
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
 CLICK_DECAY = 0.85               # each click in a market is worth this x the previous
 
@@ -72,10 +76,14 @@ def true_value(bags: list[Bag], event: Event | None = None) -> float:
     return v
 
 
-def make_quote(value: float, rng: random.Random, noise: float = QUOTE_NOISE) -> tuple[int, int]:
-    spread = max(2, round(0.06 * value))
-    mid = value * (1 + rng.gauss(0, noise))
-    bid = round(mid - spread / 2)
+def make_quote(value: float, rng: random.Random) -> tuple[int, int]:
+    """Quote with value strictly outside [bid, ask], so exactly one side wins."""
+    spread = max(1, round(SPREAD_PCT * value))
+    edge = max(1.0, value * rng.uniform(EDGE_MIN, EDGE_MAX))
+    if rng.random() < 0.5:              # market too cheap: buying wins
+        ask = math.floor(value - edge)
+        return ask - spread, ask
+    bid = math.ceil(value + edge)       # market too rich: selling wins
     return bid, bid + spread
 
 

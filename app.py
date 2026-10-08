@@ -119,7 +119,7 @@ def fruit_page():
             st.markdown(f"""
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
 - **Value = (apples in both bags) × (oranges in both bags).** Each bag shows its counts.
-- Each round shows **one quote, bid @ ask**, around the value with noise. It stays fixed for the round.
+- Each round shows **one quote, bid @ ask**, fixed for the round. It is always slightly off the value (1 to 5%), so **exactly one side makes money**: buy if value > ask, sell if value < bid. Spread is about 2%.
 - Every **{ROUND_S} seconds** a new round starts: each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each round is a new market with a new quote.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.
 - **Click decay:** in each market, every click counts **{CLICK_DECAY:.0%}** of the one before (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY**2:.0%}, ...). A wrong first click hits at full weight; trades to win it back count for less.

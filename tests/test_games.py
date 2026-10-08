@@ -5,7 +5,8 @@ import random
 from games.cards import CardGame, build_deck, kelly, odds
 import pytest
 
-from games.fruit import CLICK_DECAY, ROUND_S, Bag, Event, FruitGame, true_value
+from games.fruit import (CLICK_DECAY, EDGE_MAX, ROUND_S, SPREAD_PCT, Bag, Event,
+                         FruitGame, make_quote, true_value)
 
 
 def test_value_and_events():
@@ -28,6 +29,20 @@ def test_fruit_pnl_and_scoring():
     assert g.market_id >= 2 and len(g.first_trade_ok) == 2
     assert math.isclose(g.final_score, sum(t.pnl * t.weight for t in g.trades))
     assert g.trade("buy", now=500.0) is None
+
+
+def test_quote_exactly_one_side_wins_and_stays_close():
+    rng = random.Random(7)
+    values = [18, 18.5, 36, 50.5, 99, 144, 400, 1250.5, 2500, 5000]
+    for v in values:
+        for _ in range(2000):
+            bid, ask = make_quote(v, rng)
+            buy_pnl, sell_pnl = v - ask, bid - v
+            assert (buy_pnl > 0) != (sell_pnl > 0)      # exactly one winner
+            assert buy_pnl != 0 and sell_pnl != 0       # never break-even
+            assert 1 <= ask - bid <= max(1, round(SPREAD_PCT * v))
+            # near side of the quote is at most 5% (or 1 unit) plus rounding from value
+            assert min(abs(buy_pnl), abs(sell_pnl)) <= max(1, v * EDGE_MAX) + 1
 
 
 @pytest.mark.parametrize("bag_max", [10, 12, 25])
