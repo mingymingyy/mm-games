@@ -5,7 +5,7 @@ import random
 from games.cards import CardGame, build_deck, kelly, odds
 import pytest
 
-from games.fruit import CLICK_DECAY, Bag, Event, FruitGame, true_value
+from games.fruit import CLICK_DECAY, ROUND_S, Bag, Event, FruitGame, true_value
 
 
 def test_value_and_events():
@@ -24,7 +24,7 @@ def test_fruit_pnl_and_scoring():
     assert tr.pnl == v - g.ask
     g.trade("sell", now=1.5)  # same market: not counted for first click
     assert len(g.first_trade_ok) == 1
-    g.trade("buy", now=25.0)  # bags must have updated by 20s
+    g.trade("buy", now=25.0)  # bags update at 15s
     assert g.market_id >= 2 and len(g.first_trade_ok) == 2
     assert math.isclose(g.final_score, sum(t.pnl * t.weight for t in g.trades))
     assert g.trade("buy", now=500.0) is None
@@ -43,6 +43,17 @@ def test_bag_max_out_of_range():
     for bad in (9, 26):
         with pytest.raises(ValueError):
             FruitGame(bag_max=bad, now=0.0)
+
+
+def test_one_quote_per_round():
+    g = FruitGame(duration_s=120, seed=5, now=0.0)
+    quote = (g.bid, g.ask)
+    g.tick(ROUND_S - 0.01)
+    assert (g.bid, g.ask) == quote and g.market_id == 1
+    g.tick(ROUND_S)
+    assert g.market_id == 2 and g.next_bag_update == 2 * ROUND_S
+    g.tick(119.0)
+    assert g.market_id == 1 + int(119 // ROUND_S)
 
 
 def test_click_decay_per_market():

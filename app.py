@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from games.cards import CardGame, rank_name
-from games.fruit import BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, FruitGame
+from games.fruit import BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, ROUND_S, FruitGame
 
 st.set_page_config(page_title="Market Making Games", page_icon="📊", layout="centered")
 
@@ -60,7 +60,7 @@ def fruit_live():
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Time left", f"{int(g.end - now)}s")
-    c2.metric("Next bag update", f"{max(0, int(g.next_bag_update - now))}s")
+    c2.metric("Next bag in", f"{max(0, int(g.next_bag_update - now))}s")
     c3.metric("Market #", g.market_id)
 
     b1, b2 = st.columns(2)
@@ -119,8 +119,8 @@ def fruit_page():
             st.markdown(f"""
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
 - **Value = (apples in both bags) × (oranges in both bags).** Each bag shows its counts.
-- The market quotes **bid @ ask** around the value, with noise. It reprices every few seconds.
-- Every **15 to 20 seconds** each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each update starts a new market.
+- Each round shows **one quote, bid @ ask**, around the value with noise. It stays fixed for the round.
+- Every **{ROUND_S} seconds** a new round starts: each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each round is a new market with a new quote.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.
 - **Click decay:** in each market, every click counts **{CLICK_DECAY:.0%}** of the one before (100%, {CLICK_DECAY:.0%}, {CLICK_DECAY**2:.0%}, ...). A wrong first click hits at full weight; trades to win it back count for less.
 - **Final score = sum of (P&L × click weight).** First-click accuracy is shown as a stat.

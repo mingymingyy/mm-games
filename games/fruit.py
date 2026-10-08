@@ -1,7 +1,7 @@
 """Fruit Market game logic (no Streamlit here, so it can be unit-tested).
 
 Value = (total apples across both bags) x (total oranges across both bags).
-The market quotes a noisy bid/ask around that value. Buy when value > ask,
+Each bag round gets one noisy bid/ask around that value, held for the whole round. Buy when value > ask,
 sell when value < bid. Each trade is one unit, marked instantly at true value.
 
 Click decay: within one market, each click counts CLICK_DECAY times the one
@@ -18,8 +18,7 @@ START_MIN, START_MAX = 3, 8      # fresh bag contents per fruit
 GROW_MIN, GROW_MAX = 0, 3        # fruit added per update
 BAG_MAX = 12                     # default cap: above this, the bag resets
 BAG_MAX_MIN, BAG_MAX_MAX = 10, 25  # range the player can choose from
-UPDATE_MIN_S, UPDATE_MAX_S = 15, 20
-REQUOTE_S = 3                    # market reprices this often within a market
+ROUND_S = 15                     # each bag round (one quote) lasts this long
 QUOTE_NOISE = 0.12               # sd of mid mispricing, as a fraction of value
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
 CLICK_DECAY = 0.85               # each click in a market is worth this x the previous
@@ -117,8 +116,7 @@ class FruitGame:
         self.event: Event | None = None
         self.reset_flags = [False, False]
         self.market_id = 1
-        self.next_bag_update = now + self.rng.uniform(UPDATE_MIN_S, UPDATE_MAX_S)
-        self.next_requote = now + REQUOTE_S
+        self.next_bag_update = now + ROUND_S
         self.bid, self.ask = make_quote(self.value, self.rng)
         self.trades: list[Trade] = []
         self.first_trade_ok: dict[int, bool] = {}
@@ -137,9 +135,6 @@ class FruitGame:
         now = time.time() if now is None else min(now, self.end)
         while now >= self.next_bag_update and self.next_bag_update < self.end:
             self._update_bags(self.next_bag_update)
-        if now >= self.next_requote:
-            self.bid, self.ask = make_quote(self.value, self.rng)
-            self.next_requote = now + REQUOTE_S
 
     def _update_bags(self, t: float) -> None:
         grown = [grow_bag(b, self.rng, self.bag_max) for b in self.bags]
@@ -149,8 +144,7 @@ class FruitGame:
         self.market_id += 1
         self.markets[self.market_id] = self.value
         self.bid, self.ask = make_quote(self.value, self.rng)
-        self.next_requote = t + REQUOTE_S
-        self.next_bag_update = t + self.rng.uniform(UPDATE_MIN_S, UPDATE_MAX_S)
+        self.next_bag_update = t + ROUND_S
 
     @property
     def next_click_weight(self) -> float:

@@ -2,7 +2,7 @@
 
 Two short trading-skill games built in Streamlit.
 
-- **Fruit Market:** compute value (total apples x total oranges across two bags) and trade against a noisy bid/ask. Within each market, every click counts 85% of the one before, so a wrong first click is heavily penalised. Score = sum of P&L x click weight. Choose the max fruit per bag (10 to 25) to set the difficulty.
+- **Fruit Market:** compute value (total apples x total oranges across two bags) and trade against one noisy bid/ask per 15-second round. Within each market, every click counts 85% of the one before, so a wrong first click is heavily penalised. Score = sum of P&L x click weight. Choose the max fruit per bag (10 to 25) to set the difficulty.
 - **Next Card Betting:** higher or lower on the next card, drawn without replacement. Score = decision quality (up to 3) + Kelly sizing efficiency x participation (up to 7) + suit bonus.
 
 ## Run locally
@@ -34,7 +34,7 @@ Push to a public GitHub repo, then create an app on Streamlit Community Cloud po
 
 ## Key parameters
 
-Tune these at the top of `games/fruit.py`: `BAG_MAX` (default; players can pick 10 to 25), `CLICK_DECAY` (0.85), `QUOTE_NOISE` (how mispriced the market is), `REQUOTE_S`, `EVENT_PROB`, update interval.
+Tune these at the top of `games/fruit.py`: `BAG_MAX` (default; players can pick 10 to 25), `CLICK_DECAY` (0.85), `QUOTE_NOISE` (how mispriced the market is), `ROUND_S` (15 s per bag round, one quote each), `EVENT_PROB`.
 
 ## Kelly with pushes
 
