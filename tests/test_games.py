@@ -64,7 +64,7 @@ def test_round_and_requote_schedule():
     g = FruitGame(duration_s=120, seed=5, now=0.0)
     quote = (g.bid, g.ask)
     g.tick(REQUOTE_S - 0.01)
-    assert (g.bid, g.ask) == quote and g.quote_time == 0.0   # quote held for 10 s
+    assert (g.bid, g.ask) == quote and g.quote_time == 0.0   # quote held until the first requote
     g.tick(REQUOTE_S)
     assert g.quote_time == REQUOTE_S and g.market_id == 1     # requote, same round
     g.tick(2 * REQUOTE_S)
@@ -74,7 +74,7 @@ def test_round_and_requote_schedule():
     assert g.next_requote == ROUND_S + REQUOTE_S and g.next_bag_update == 2 * ROUND_S
     g.tick(119.0)
     assert g.market_id == 1 + int(119 // ROUND_S)
-    assert g.quote_time == 110.0
+    assert g.quote_time == (119 // REQUOTE_S) * REQUOTE_S
 
 
 def test_every_requote_has_exactly_one_winning_side():
@@ -88,16 +88,16 @@ def test_every_requote_has_exactly_one_winning_side():
             assert (v > g.ask) != (v < g.bid)
             assert (g.bid, g.ask) != last      # every requote shows a new price
             last = (g.bid, g.ask)
-    assert len(seen) == 300   # one quote every 10 s
+    assert len(seen) == 3000 // REQUOTE_S   # one quote every REQUOTE_S
 
 
 def test_trading_locked_after_quote_change():
     g = FruitGame(duration_s=120, seed=2, now=0.0)
     assert g.trade("buy", now=LOCK_S - 0.01) is None           # game start counts as a change
     assert g.trade("buy", now=LOCK_S) is not None
-    assert g.trade("buy", now=REQUOTE_S + 1.0) is None          # requote at 10 s
+    assert g.trade("buy", now=REQUOTE_S + 1.0) is None          # first requote
     assert g.trade("buy", now=REQUOTE_S + LOCK_S) is not None
-    assert g.trade("sell", now=ROUND_S + 1.99) is None          # new round at 30 s
+    assert g.trade("sell", now=ROUND_S + 1.99) is None          # new round
     assert g.trade("sell", now=ROUND_S + LOCK_S) is not None
     assert len(g.trades) == 3
 
