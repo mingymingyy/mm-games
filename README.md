@@ -1,9 +1,10 @@
 # Market Making Games
 
-Two short trading-skill games built in Streamlit.
+Three short trading-skill games built in Streamlit.
 
 - **Fruit Market:** compute value (total apples x total oranges across two bags) and trade against a bid/ask that is requoted 3 times per 20-second round (every 6.67 seconds). Every quote is only 0.5 to 1.5% off value (spread about 1%), so exactly one side wins but by a small amount, and trading is locked for 1.5 seconds after any quote change. Within each market, every click counts 85% of the one before, so a wrong first click is heavily penalised. Score = sum of P&L x click weight. Choose the max fruit per bag (10 to 25) to set the difficulty, and optionally hide your score until the game ends.
 - **Next Card Betting:** higher or lower on the next card, drawn without replacement. Score = decision quality (up to 3) + Kelly sizing efficiency x participation (up to 7) + suit bonus.
+- **Make a Market:** you are the market maker. Quote bid @ ask on the sum of three hidden dice, three times per round (0, 1, 2 dice shown). Price-sensitive noise traders pay your spread; informed traders who know the total only trade when your quote is wrong (adverse selection). Holding inventory costs 0.25 per unit per quote, so skew to get flat. Score = trading P&L - inventory cost, compared with a benchmark that quotes centred on fair value at max width against exactly the same traders.
 
 ## Run locally
 
@@ -28,7 +29,8 @@ assets/logo.svg   Header logo
 .streamlit/       Theme (colours, Inter font)
 games/fruit.py    Fruit Market rules, quoting, scoring
 games/cards.py    Card odds, Kelly fraction, skill scoring
-tests/            Unit tests for both rule engines
+games/quote.py    Make a Market: trader flow, fills, inventory cost, benchmark
+tests/            Unit tests for all three rule engines
 ```
 
 ## Deploy (free)

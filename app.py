@@ -1,4 +1,5 @@
 """Market-making training games. Run with:  streamlit run app.py"""
+import math
 import time
 
 import pandas as pd
@@ -8,6 +9,8 @@ import ui
 from games.cards import CardGame, rank_name
 from games.fruit import (BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, LOCK_S,
                          QUOTES_PER_ROUND, REQUOTE_S, ROUND_S, FruitGame)
+from games.quote import (INFORMED_LEVELS, INV_COST, N_DICE, TICK, TRADER_NAMES, TRADERS_PER_QUOTE,
+                         WIDTH_CHOICES, MarketMakerGame, check_quote, fair_value)
 
 st.set_page_config(page_title="Market Making Games", page_icon="📊", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -420,6 +423,295 @@ def card_results(g: CardGame):
 
 
 # ======================================================================
+# Make a Market
+# ======================================================================
+MM_DESC = ("Now you're the market maker. Quote a bid and ask on the sum of three hidden dice. "
+           "Earn the spread from regular traders, don't get picked off by informed ones, "
+           "and keep your inventory in check.")
+
+
+def start_mm():
+    cfg = {"rounds": st.session_state.mm_rounds, "informed": st.session_state.mm_informed,
+           "width": float(st.session_state.mm_width), "hint": st.session_state.mm_hint}
+    st.session_state.mm_cfg = cfg
+    st.session_state.mm = MarketMakerGame(cfg["rounds"], INFORMED_LEVELS[cfg["informed"]],
+                                          cfg["width"])
+    mm_set_quote(*opening_quote(cfg["width"]))
+    st.session_state.mm_err = ""
+    st.session_state.mm_results = False
+
+
+def opening_quote(width: float) -> tuple[float, float]:
+    """A quote of the given width centred as close as the tick allows on the opening fair value."""
+    bid = math.floor((fair_value([]) - width / 2) / TICK) * TICK
+    return bid, bid + width
+
+
+def mm_set_quote(bid: float, ask: float):
+    # Kept outside the widget keys too: Streamlit drops widget state while the inputs are hidden
+    # (between rounds), so the inputs are re-seeded from these.
+    st.session_state.mm_bid = st.session_state.mm_last_bid = float(bid)
+    st.session_state.mm_ask = st.session_state.mm_last_ask = float(ask)
+
+
+def mm_send():
+    g: MarketMakerGame = st.session_state.mm
+    bid, ask = float(st.session_state.mm_bid), float(st.session_state.mm_ask)
+    err = check_quote(bid, ask, g.max_width)
+    st.session_state.mm_err = err or ""
+    st.session_state.mm_last_bid, st.session_state.mm_last_ask = bid, ask
+    if not err:
+        g.quote(bid, ask)
+
+
+def mm_shift(delta: float):
+    mm_set_quote(float(st.session_state.mm_bid) + delta, float(st.session_state.mm_ask) + delta)
+
+
+def mm_next():
+    g: MarketMakerGame = st.session_state.mm
+    if g.done:
+        st.session_state.mm_results = True
+    else:
+        g.next_round()
+        width = st.session_state.mm_last_ask - st.session_state.mm_last_bid
+        mm_set_quote(*opening_quote(min(max(width, TICK), g.max_width)))
+
+
+def pos_text(p: int) -> str:
+    return "flat" if p == 0 else (f"+{p} long" if p > 0 else f"{p} short")
+
+
+def dice_html(g: MarketMakerGame) -> str:
+    faces = []
+    for i, d in enumerate(g.dice):
+        shown = g.settled or i < g.stage
+        faces.append(f"<div class='die{'' if shown else ' hidden'}'>{d if shown else '?'}</div>")
+    return f"<div class='dice-row'>{''.join(faces)}</div>"
+
+
+def flow_lines(g: MarketMakerGame, reveal: bool) -> str:
+    """This round's quotes and what each trader did. Trader types only after settlement."""
+    fills = {(f.stage, f.trader): f for f in g.fills if f.round_no == g.round_no}
+    rows = []
+    for q in [q for q in g.quotes if q.round_no == g.round_no]:
+        acts = []
+        for name, o in zip(TRADER_NAMES, q.outcomes):
+            f = fills.get((q.stage, name))
+            who = f"{name}{' (informed)' if reveal and f and f.informed else ''}"
+            if o == "sold":
+                acts.append(f"<span class='lift'>{who} bought at your ask</span>")
+            elif o == "bought":
+                acts.append(f"<span class='hit'>{who} sold at your bid</span>")
+            else:
+                acts.append(f"<span class='pass'>{name} passed</span>")
+        rows.append(f"<div class='fl'><b>{q.stage} shown · {q.bid:g} @ {q.ask:g}</b>"
+                    f"<span>{' · '.join(acts)}</span>"
+                    f"<em>position {pos_text(q.position_after)} · cost {q.inv_charge:g}</em></div>")
+    return "<div class='flow'>" + ("".join(rows) or "<div class='fl'>No quotes yet this round.</div>") + "</div>"
+
+
+def mm_live():
+    g: MarketMakerGame = st.session_state.mm
+    if st.session_state.get("mm_results"):
+        mm_results(g)
+        return
+
+    cost_now = sum(q.inv_charge for q in g.quotes if q.round_no == g.round_no)
+    with st.container(key="desk_mm"):
+        ui.html("<div class='desk-top'><div class='desk-title'>🎲 Make a Market</div><div class='stats'>"
+                + ui.stat("Round", f"{g.round_no} / {g.rounds}")
+                + ui.stat("Dice shown", f"{len(g.shown)} / {N_DICE}")
+                + ui.stat("Position", pos_text(g.position))
+                + ui.stat("Inventory cost", f"{cost_now:g}")
+                + ui.stat("Banked score", f"{g.banked:+.1f}") + "</div></div>")
+        ui.html(dice_html(g))
+
+        if not g.settled:
+            caption = "Settles at the sum of all three dice."
+            if st.session_state.mm_cfg.get("hint"):
+                caption += f" &nbsp;Fair value now: <b>{g.fair:g}</b>"
+            ui.html(f"<div class='odds'>{caption}</div>")
+
+            for k in ("bid", "ask"):
+                if f"mm_{k}" not in st.session_state:
+                    st.session_state[f"mm_{k}"] = st.session_state[f"mm_last_{k}"]
+            b, a, s = st.columns([1, 1, 1.2], vertical_alignment="bottom")
+            b.number_input("Your bid", min_value=0.0, max_value=30.0, step=TICK, format="%.1f",
+                           key="mm_bid")
+            a.number_input("Your ask", min_value=0.0, max_value=30.0, step=TICK, format="%.1f",
+                           key="mm_ask")
+            s.button(f"Send quote ({g.stage + 1}/{N_DICE})", key="send_btn", on_click=mm_send,
+                     icon=":material/send:", width="stretch")
+            bid, ask = float(st.session_state.mm_bid), float(st.session_state.mm_ask)
+            d, u, info = st.columns([1, 1, 2.6], vertical_alignment="center")
+            with d.container(key="shift_dn"):
+                st.button("Shift down", icon=":material/south:", on_click=mm_shift, args=(-TICK,),
+                          width="stretch")
+            with u.container(key="shift_up"):
+                st.button("Shift up", icon=":material/north:", on_click=mm_shift, args=(TICK,),
+                          width="stretch")
+            info.markdown(f"<div class='odds' style='text-align:left'>Width {ask - bid:g} "
+                          f"(max {g.max_width:g}) · Mid {(bid + ask) / 2:g}</div>",
+                          unsafe_allow_html=True)
+            if st.session_state.get("mm_err"):
+                ui.html(f"<div class='event'>⚠️ {st.session_state.mm_err}</div>")
+        else:
+            s = g.summaries[-1]
+            ui.html(f"<div class='settle'>Total = {' + '.join(map(str, g.dice))} = <b>{g.true}</b>"
+                    f" &nbsp;·&nbsp; Round P&L {s.pnl:+g} &nbsp;·&nbsp; Inventory cost {s.inv_charge:g}"
+                    f" &nbsp;·&nbsp; <b>Round score {s.score:+.2f}</b>"
+                    f" &nbsp;·&nbsp; Benchmark {s.bench_score:+.2f}</div>")
+
+        ui.html(flow_lines(g, reveal=g.settled))
+
+        m, q = st.columns([5, 1], vertical_alignment="center")
+        if g.settled:
+            with m.container(key="big_mm_next"):
+                st.button("See results" if g.done else "Next round", type="primary",
+                          icon=":material/arrow_forward:", on_click=mm_next, width="stretch")
+        with q.container(key="quit_mm"):
+            if st.button("Quit", width="stretch"):
+                del st.session_state["mm"]
+                st.rerun()
+
+
+def mm_results(g: MarketMakerGame):
+    bd = g.breakdown()
+    with st.container(key="desk_mm_done"):
+        beat = bd["score"] - bd["benchmark"]
+        ui.html("<div class='desk-top'><div class='desk-title'>🏁 Market closed</div></div>"
+                "<div class='stats'>" + ui.stat("Final score", f"{bd['score']:+.2f}")
+                + ui.stat("Benchmark", f"{bd['benchmark']:+.2f}")
+                + ui.stat("vs benchmark", f"{beat:+.2f}")
+                + ui.stat("Earned from noise", f"{bd['from_noise']:+g}")
+                + ui.stat("Lost to informed", f"{bd['from_informed']:+g}")
+                + ui.stat("Inventory cost", f"{-bd['inv_charge']:+g}")
+                + ui.stat("Mid vs fair (avg)", f"{bd['centring']:.2f}") + "</div>")
+
+    notes = []
+    if bd["score"] > bd["benchmark"]:
+        notes.append("✅ You beat the benchmark: better than quoting centred at max width every time.")
+    else:
+        notes.append("📏 The benchmark beat you. It just quotes centred on fair value at max width.")
+    if bd["centring"] > 0.75:
+        notes.append(f"🎯 Your mid was {bd['centring']:.2f} from fair value on average. "
+                     "Re-centre after every die: fair = shown dice + 3.5 × hidden dice.")
+    if bd["fills"] and bd["informed_fills"] / bd["fills"] > 0.5:
+        notes.append("🦈 Most of your fills were informed traders. Your quotes were often on the wrong "
+                     "side of the total: widen when few dice are showing.")
+    if bd["from_noise"] > 0 and bd["inv_charge"] > 0.4 * bd["from_noise"]:
+        notes.append("📦 Inventory cost ate a big share of your spread income. When long, shade both "
+                     "quotes down; when short, shade them up.")
+    if bd["fills"] < 2 * g.rounds:
+        notes.append("🌵 Few trades: your quotes may be too wide for regular traders. Tighten once "
+                     "dice are revealed.")
+    for n in notes:
+        st.markdown(n)
+
+    df = pd.DataFrame([{"Round": s.round_no, "Dice": " ".join(map(str, s.dice)), "Total": s.true,
+                        "P&L": s.pnl, "Inventory cost": s.inv_charge, "Score": round(s.score, 2),
+                        "Benchmark": round(s.bench_score, 2)} for s in g.summaries])
+    st.dataframe(df, hide_index=True, width="stretch")
+
+    with st.container(key="big_mm_again"):
+        if st.button("Play again", type="primary", icon=":material/replay:"):
+            del st.session_state["mm"]
+            st.rerun()
+
+
+def mm_tabs():
+    t1, t2, t3, t4 = st.tabs([":material/menu_book: Rules", ":material/calculate: Fair Value",
+                              ":material/play_circle: Examples", ":material/lightbulb: Strategies"])
+    with t1:
+        ui.section("info", "Overview")
+        st.markdown(f"""
+You are the **market maker**. Each round hides three dice, and the asset settles at **their sum**.
+You quote a **bid @ ask** three times per round: with **0**, **1** and **2** dice showing.
+Then the last die is revealed and every trade settles at the true total.
+
+After each quote, **{TRADERS_PER_QUOTE} traders** arrive:
+
+| Trader | What they know | What they do |
+|---|---|---|
+| **Regular (noise)** | Fair value only | Buys or sells for their own reasons, but only if your price is close enough to fair. Quote too wide and they go elsewhere. |
+| **Informed** | The **true total** | Buys your ask only if the total is above it; sells your bid only if it's below. They only trade when you're wrong. |
+
+- You **don't** see who is informed until the round settles.
+- Your quote can be at most the **max width** you chose (ask − bid), in steps of {TICK:g}.
+- **Inventory cost:** after every quote you pay **{INV_COST:g} per unit** you hold, long or short.
+- **Score = trading P&L − inventory cost.** You're compared with a **benchmark** that faces the
+  exact same traders but always quotes centred on fair value at max width.
+""")
+    with t2:
+        ui.section("calc", "Fair Value")
+        ui.html("<div class='formula'>fair value = (sum of dice shown) + 3.5 × (dice still hidden)</div>")
+        st.markdown("""
+| Dice shown | Fair value | Uncertainty (std. dev.) |
+|---|---|---|
+| none | 0 + 3.5 × 3 = **10.5** | ± 2.96 |
+| 6 | 6 + 3.5 × 2 = **13** | ± 2.42 |
+| 6, 2 | 8 + 3.5 = **11.5** | ± 1.71 |
+| 6, 2, 5 | **13** (settled) | none |
+
+The uncertainty shrinks as dice are revealed, so informed traders have less of an edge over you.
+""")
+    with t3:
+        ui.section("play", "Examples")
+        st.markdown("""
+**1. Opening quote.** No dice shown, fair value 10.5. You quote **9 @ 12** (width 3).
+A regular buyer pays 12: you earn **1.5** on average. An informed trader only pays 12 when the
+total is **13 or more**, and then you lose.
+
+**2. Re-centre after a die.** The first die is a **6**, so fair value jumps to **13**.
+If you leave 9 @ 12 up, informed traders buy at 12 whenever the other two dice sum to 7+
+(**58%** of the time). Move to about **11.5 @ 14.5**.
+
+**3. Skew to flatten.** You're **long 2** after two regular sellers hit your bid. Fair value is 13.
+Instead of 11.5 @ 14.5, quote **11 @ 14**: buyers are now more likely to lift you and sellers
+less likely to hit you, so your position shrinks and so does your inventory cost.
+""")
+    with t4:
+        ui.section("bulb", "Strategies")
+        st.markdown("""
+1. **Centre on fair value, every time.** Shown dice + 3.5 for each hidden die.
+2. **Width pays for risk.** Go wider when uncertainty is high (no dice shown) or there are many
+   informed traders; go tighter as dice are revealed.
+3. **Too wide is also a mistake.** Regular traders walk away, and then you earn nothing.
+4. **Read the flow.** If your ask keeps getting lifted, the total may be higher than fair value.
+   Informed traders are telling you something.
+5. **Skew, don't sit on inventory.** Long → shade both quotes down. Short → shade them up.
+""")
+
+
+def mm_page():
+    if "mm" in st.session_state:
+        mm_live()
+        return
+
+    cta = ui.hero(ui.mm_art(), "Make a Market", [("Solo", "green"), ("Medium", "slate")],
+                  MM_DESC, "1 player", "~5 min")
+    with cta.container(key="big_mm_hero"):
+        st.button("Play Now", key="mm_play_hero", type="primary", icon=":material/play_arrow:",
+                  on_click=start_mm, width="stretch")
+
+    cfg = st.session_state.get("mm_cfg", {})
+    with st.container(border=True, key="settings_mm"):
+        ui.html("<div class='sec-h' style='font-size:1.15rem'>Game settings</div>")
+        a, b, c, d = st.columns(4, gap="large")
+        a.slider("Rounds", 3, 15, cfg.get("rounds", 8), key="mm_rounds")
+        b.select_slider("Informed traders", options=list(INFORMED_LEVELS),
+                        value=cfg.get("informed", "Medium"), key="mm_informed",
+                        format_func=lambda k: f"{k} ({INFORMED_LEVELS[k]:.0%})")
+        c.select_slider("Max width", options=list(WIDTH_CHOICES), value=cfg.get("width", 4.0),
+                        key="mm_width", format_func=lambda w: f"{w:g}")
+        d.toggle("Show fair value (practice)", value=cfg.get("hint", False), key="mm_hint")
+
+    mm_tabs()
+    ui.play_bar("Make a Market", "1 player", "~5 min", start_mm, "mm_play_bar")
+
+
+# ======================================================================
 # Home and navigation
 # ======================================================================
 def game_card(key: str, art: str, title: str, badge_items, desc: str, page) -> None:
@@ -434,23 +726,28 @@ def game_card(key: str, art: str, title: str, badge_items, desc: str, page) -> N
 def home_page():
     cta = ui.hero("", "Market Making Games", [("Free", "green")],
                   "Short, focused games for the skills trading interviews test: fast fair-value "
-                  "maths, reading a two-way price, and sizing bets to your edge.",
+                  "maths, reading a two-way price, sizing bets to your edge, and making a market "
+                  "yourself.",
                   "Solo practice", "~5 min per game", back=False)
     with cta.container(key="big_link_home"):
         st.page_link(FRUIT, label="Start playing", icon=":material/play_arrow:", width="stretch")
 
     ui.html("<div class='section-title'>Games</div>"
             "<div class='section-sub'>Pick a game. Each one trains a different skill.</div>")
-    a, b = st.columns(2, gap="large")
+    a, b, c = st.columns(3, gap="large")
     with a:
         game_card("fruit", ui.fruit_art(small=True), "Fruit Market",
                   [("Solo", "green"), ("Easy → Hard", "slate")], FRUIT_DESC, FRUIT)
     with b:
         game_card("cards", ui.cards_art(small=True), "Next Card Betting",
                   [("Solo", "green"), ("Medium", "slate")], CARDS_DESC, CARDS)
+    with c:
+        game_card("mm", ui.mm_art(small=True), "Make a Market",
+                  [("Solo", "green"), ("Medium", "slate")], MM_DESC, MM)
 
 
 HOME = st.Page(home_page, title="Games", url_path="games", default=True)
 FRUIT = st.Page(fruit_page, title="Fruit Market", url_path="fruit-market")
 CARDS = st.Page(cards_page, title="Next Card Betting", url_path="next-card")
-st.navigation([HOME, FRUIT, CARDS], position="top").run()
+MM = st.Page(mm_page, title="Make a Market", url_path="make-a-market")
+st.navigation([HOME, FRUIT, CARDS, MM], position="top").run()

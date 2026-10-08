@@ -208,7 +208,33 @@ header [data-testid="stMainMenuButton"] svg { fill: #fff !important; }
 [class*="st-key-desk"] [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; gap: 10px; }
 [class*="st-key-desk"] [data-testid="stColumn"] { min-width: 0 !important; }
 
+/* ---- Make a Market ---------------------------------------------------- */
+.die { width: 56px; height: 56px; border-radius: 12px; background: #fff; color: #111;
+  display: flex; align-items: center; justify-content: center; font-family: var(--mono);
+  font-weight: 700; font-size: 1.7rem; box-shadow: 0 6px 14px rgba(0,0,0,.3); }
+.die.hidden { background: repeating-linear-gradient(45deg,#7a2e3a,#7a2e3a 6px,#8f3846 6px,#8f3846 12px);
+  color: #fff; }
+.dice-row { display: flex; justify-content: center; gap: 22px; padding: 6px 0 2px; }
+.dice-row .die { width: 92px; height: 92px; font-size: 2.8rem; border-radius: 18px; }
+.settle { border-radius: 12px; padding: 12px 16px; text-align: center; color: #fff;
+  background: rgba(22,163,74,.16); border: 1px solid rgba(74,222,128,.45); }
+.flow { display: flex; flex-direction: column; gap: 8px; }
+.fl { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; border-radius: 10px;
+  padding: 9px 14px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.88); font-size: .95rem; }
+.fl b { font-family: var(--mono); color: #fff; }
+.fl em { margin-left: auto; font-style: normal; color: rgba(255,255,255,.6); font-size: .88rem; }
+.fl .lift { color: #4ade80; } .fl .hit { color: #f87171; } .fl .pass { color: rgba(255,255,255,.5); }
+[class*="st-key-send_btn"] button { min-height: 44px; background: var(--red); color: #fff; border: none; }
+[class*="st-key-send_btn"] button:hover { background: var(--red-hover); color: #fff; }
+[class*="st-key-send_btn"] button p { font-weight: 700; }
+[class*="st-key-shift"] button { background: transparent; color: rgba(255,255,255,.85);
+  border-color: rgba(255,255,255,.3); }
+[class*="st-key-shift"] button:hover { color: #fff; border-color: #fff; }
+
 @media (max-width: 640px) {
+  .dice-row .die { width: 70px; height: 70px; font-size: 2.1rem; }
+  .fl em { margin-left: 0; }
   .bag { padding: 10px 12px; min-height: 0; }
   .bag .n { font-size: 1.4rem; }
   .bag .fr { font-size: .8rem; }
@@ -301,6 +327,16 @@ def cards_art(small: bool = False) -> str:
             "<div class='item'><div class='face'><div class='pcard back'>?</div></div>"
             "<span class='chip'>next</span></div>"
             "<div class='item'><div class='face emoji'>⚖️</div><span class='chip'>f* 17%</span></div>"
+            "</div>")
+
+
+def mm_art(small: bool = False) -> str:
+    return (f"<div class='art{' small' if small else ''}'>"
+            "<div class='item'><div class='face'><div class='die'>6</div></div>"
+            "<span class='chip'>shown</span></div>"
+            "<div class='item'><div class='face'><div class='die hidden'>?</div></div>"
+            "<span class='chip'>hidden</span></div>"
+            "<div class='item'><div class='face emoji'>🏦</div><span class='chip'>11.5 @ 14.5</span></div>"
             "</div>")
 
 
