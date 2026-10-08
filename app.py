@@ -5,7 +5,8 @@ import pandas as pd
 import streamlit as st
 
 from games.cards import CardGame, rank_name
-from games.fruit import (BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, LOCK_S, REQUOTE_S,
+from games.fruit import (BAG_MAX, BAG_MAX_MAX, BAG_MAX_MIN, CLICK_DECAY, LOCK_S,
+                         QUOTES_PER_ROUND, REQUOTE_S,
                          ROUND_S, FruitGame)
 
 st.set_page_config(page_title="Market Making Games", page_icon="📊", layout="centered")
@@ -126,7 +127,7 @@ def fruit_page():
             st.markdown(f"""
 - Two bags each start with **3 to 8** apples and **3 to 8** oranges.
 - **Value = (apples in both bags) × (oranges in both bags).** Each bag shows its counts.
-- The market quotes **bid @ ask**, with a **new quote every {REQUOTE_S} seconds**. Every quote is always slightly off the value (1 to 5%), so **exactly one side makes money**: buy if value > ask, sell if value < bid. Spread is about 2%.
+- The market quotes **bid @ ask**, with a **new quote every {REQUOTE_S:.2f} seconds** ({QUOTES_PER_ROUND} per round). Every quote is always slightly off the value (1 to 5%), so **exactly one side makes money**: buy if value > ask, sell if value < bid. Spread is about 2%.
 - After **any** quote change, trading is **locked for {LOCK_S} seconds** so you can't hit an old price by accident.
 - Every **{ROUND_S} seconds** a new round starts: each bag gains 0 to 3 of each fruit. If any count goes above the **max you choose ({BAG_MAX_MIN} to {BAG_MAX_MAX})**, that bag resets. Higher max = bigger numbers = harder maths. Each round is a new market.
 - **Events** (if on): inflation 2x, deflation 0.5x, or one fruit in one bag is worth zero.

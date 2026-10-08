@@ -25,8 +25,9 @@ GROW_MIN, GROW_MAX = 0, 3        # fruit added per update
 BAG_MAX = 12                     # default cap: above this, the bag resets
 BAG_MAX_MIN, BAG_MAX_MAX = 10, 25  # range the player can choose from
 ROUND_S = 20                     # each bag round lasts this long
-REQUOTE_S = 5                    # new quote this often within a round
-LOCK_S = 2                       # no trading for this long after any quote change
+QUOTES_PER_ROUND = 3
+REQUOTE_S = ROUND_S / QUOTES_PER_ROUND  # 6.67 s per quote
+LOCK_S = 1.5                     # no trading for this long after any quote change
 SPREAD_PCT = 0.02                # ask - bid, as a fraction of value (min 1)
 EDGE_MIN, EDGE_MAX = 0.01, 0.05  # gap from value to the near side of the quote (min 1)
 EVENT_PROB = 0.3                 # chance a bag update triggers an event
@@ -158,7 +159,8 @@ class FruitGame:
             t = min(self.next_bag_update, self.next_requote)
             if now < t or t >= self.end:
                 return
-            if self.next_bag_update <= self.next_requote:   # round change wins a tie
+            # round change wins a tie (with float slack, so no sliver of a quote at round end)
+            if self.next_bag_update <= self.next_requote + 1e-6:
                 self._update_bags(self.next_bag_update)
             else:
                 self._new_quote(self.next_requote)

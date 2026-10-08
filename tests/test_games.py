@@ -5,8 +5,8 @@ import random
 from games.cards import CardGame, build_deck, kelly, odds
 import pytest
 
-from games.fruit import (CLICK_DECAY, EDGE_MAX, LOCK_S, REQUOTE_S, ROUND_S, SPREAD_PCT, Bag,
-                         Event, FruitGame, make_quote, true_value)
+from games.fruit import (CLICK_DECAY, EDGE_MAX, LOCK_S, QUOTES_PER_ROUND, REQUOTE_S, ROUND_S,
+                         SPREAD_PCT, Bag, Event, FruitGame, make_quote, true_value)
 
 
 def test_value_and_events():
@@ -74,7 +74,7 @@ def test_round_and_requote_schedule():
     assert g.next_requote == ROUND_S + REQUOTE_S and g.next_bag_update == 2 * ROUND_S
     g.tick(119.0)
     assert g.market_id == 1 + int(119 // ROUND_S)
-    assert g.quote_time == (119 // REQUOTE_S) * REQUOTE_S
+    assert g.quote_time == pytest.approx((119 // REQUOTE_S) * REQUOTE_S)
 
 
 def test_every_requote_has_exactly_one_winning_side():
@@ -88,7 +88,21 @@ def test_every_requote_has_exactly_one_winning_side():
             assert (v > g.ask) != (v < g.bid)
             assert (g.bid, g.ask) != last      # every requote shows a new price
             last = (g.bid, g.ask)
-    assert len(seen) == 3000 // REQUOTE_S   # one quote every REQUOTE_S
+    assert len(seen) == 3000 // ROUND_S * QUOTES_PER_ROUND   # exactly 3 quotes a round
+
+
+def test_three_quotes_per_round_no_slivers():
+    g = FruitGame(duration_s=2000, seed=4, now=0.0)
+    changes = []
+    for i in range(2000 * 100):          # step 0.01 s
+        t = i / 100
+        before = g.quote_time
+        g.tick(t)
+        if g.quote_time != before:
+            changes.append(g.quote_time)
+    gaps = [b - a for a, b in zip([0.0] + changes, changes)]
+    assert len(changes) == 2000 // ROUND_S * QUOTES_PER_ROUND - 1
+    assert all(abs(gap - REQUOTE_S) < 1e-6 for gap in gaps)   # every quote lasts 6.67 s
 
 
 def test_trading_locked_after_quote_change():
@@ -97,7 +111,7 @@ def test_trading_locked_after_quote_change():
     assert g.trade("buy", now=LOCK_S) is not None
     assert g.trade("buy", now=REQUOTE_S + 1.0) is None          # first requote
     assert g.trade("buy", now=REQUOTE_S + LOCK_S) is not None
-    assert g.trade("sell", now=ROUND_S + 1.99) is None          # new round
+    assert g.trade("sell", now=ROUND_S + LOCK_S - 0.01) is None  # new round
     assert g.trade("sell", now=ROUND_S + LOCK_S) is not None
     assert len(g.trades) == 3
 
